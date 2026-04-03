@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Paperclip Setup</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: Inter, system-ui, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            background: #0b0b0d;
+            color: #f5f5f5;
+        }
+
+        main {
+            width: min(34rem, calc(100vw - 2rem));
+            border: 1px solid #27272a;
+            border-radius: 16px;
+            background: #111114;
+            padding: 1.5rem;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+        }
+
+        h1 {
+            margin: 0 0 0.75rem;
+            font-size: 1.35rem;
+        }
+
+        p {
+            margin: 0.75rem 0;
+            line-height: 1.55;
+            color: #d4d4d8;
+        }
+
+        code {
+            font-family: ui-monospace, SFMono-Regular, monospace;
+            font-size: 0.92em;
+            padding: 0.12rem 0.35rem;
+            border-radius: 6px;
+            background: #18181b;
+            color: #f4f4f5;
+        }
+
+        button {
+            margin-top: 1rem;
+            border: 0;
+            border-radius: 999px;
+            padding: 0.7rem 1rem;
+            background: #f4f4f5;
+            color: #09090b;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .muted {
+            color: #a1a1aa;
+            font-size: 0.95rem;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Preparing Paperclip</h1>
+        <p id="message">Checking whether the first admin invite is ready...</p>
+        <p class="muted">
+            Umbrel will open the CEO invite automatically once it has been written to
+            <code>PAPERCLIP_FIRST_ADMIN_INVITE.txt</code>.
+        </p>
+        <button id="retry" type="button">Retry now</button>
+    </main>
+    <script>
+        const message = document.getElementById("message");
+        const retryButton = document.getElementById("retry");
+
+        function parseInvitePath(fileContents) {
+            const match = fileContents.match(/https?:\/\/[^\s]+(\/invite\/[^\s]+)/i);
+            return match ? match[1] : null;
+        }
+
+        async function readJson(url) {
+            const response = await fetch(url, { cache: "no-store" });
+            if (!response.ok) {
+                throw new Error(`Request failed with ${response.status}`);
+            }
+            return response.json();
+        }
+
+        async function tryInviteRedirect() {
+            const response = await fetch("/__paperclip_invite", { cache: "no-store" });
+            if (!response.ok) {
+                return false;
+            }
+
+            const invitePath = parseInvitePath(await response.text());
+            if (!invitePath) {
+                return false;
+            }
+
+            message.textContent = "Redirecting to the first admin invite...";
+            window.location.replace(invitePath);
+            return true;
+        }
+
+        async function bootstrapEntry() {
+            try {
+                const health = await readJson("/api/health");
+                const pending =
+                    health.deploymentMode === "authenticated" &&
+                    health.bootstrapStatus === "bootstrap_pending";
+
+                if (!pending) {
+                    message.textContent = "Opening Paperclip...";
+                    window.location.replace("/");
+                    return;
+                }
+
+                if (health.bootstrapInviteActive) {
+                    const redirected = await tryInviteRedirect();
+                    if (redirected) {
+                        return;
+                    }
+
+                    message.textContent =
+                        "Paperclip has already created the bootstrap invite. Waiting for Umbrel to save the link...";
+                } else {
+                    message.textContent =
+                        "Paperclip is creating the first admin invite. This page will retry automatically.";
+                }
+            } catch (error) {
+                message.textContent =
+                    "Paperclip is still starting. Retry in a moment if this page does not update automatically.";
+            }
+
+            window.setTimeout(bootstrapEntry, 3000);
+        }
+
+        retryButton.addEventListener("click", () => {
+            bootstrapEntry();
+        });
+
+        bootstrapEntry();
+    </script>
+</body>
+</html>

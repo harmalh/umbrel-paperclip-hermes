@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <rect width="1440" height="900" fill="#0f172a"/>
+  <text x="720" y="430" text-anchor="middle" fill="#e2e8f0" font-size="56" font-family="Arial, sans-serif">Paperclip on Umbrel</text>
+  <text x="720" y="500" text-anchor="middle" fill="#94a3b8" font-size="34" font-family="Arial, sans-serif">Embedded PostgreSQL · Single Container</text>
+</svg>

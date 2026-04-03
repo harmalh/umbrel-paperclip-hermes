@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/paperclip-umbrel-env.sh"
+_BASE_PORT="$(paperclip_published_host_port)"
+
+WEB_CONTAINER="${APP_ID}_web_1"
+LOG_FILE="${APP_DATA_DIR}/bootstrap-ceo-automation.log"
+INVITE_FILE="${APP_DATA_DIR}/PAPERCLIP_FIRST_ADMIN_INVITE.txt"
+BASE_URL="http://${DEVICE_DOMAIN_NAME:-umbrel.local}:${_BASE_PORT}"
+
+append_log() {
+    printf '%s\n' "$@" | tee -a "${LOG_FILE}" >&2
+}
+
+log() {
+    append_log "[paperclip-bootstrap] $*"
+}
+
+if ! command -v docker >/dev/null 2>&1; then
+    log "docker not found; skipping"
+    exit 0
+fi
+
+{
+    echo ""
+    echo "=== paperclip-bootstrap $(date -u +"%Y-%m-%dT%H:%M:%SZ") ==="
+} >>"${LOG_FILE}" 2>/dev/null || true
+
+for _ in $(seq 1 120); do
+    if docker inspect "${WEB_CONTAINER}" >/dev/null 2>&1; then
+        state="$(docker inspect -f '{{.State.Running}}' "${WEB_CONTAINER}" 2>/dev/null || echo false)"
+        if [[ "${state}" == "true" ]]; then
+            break
+        fi
+    fi
+    sleep 1
+done
+
+if [[ "$(docker inspect -f '{{.State.Running}}' "${WEB_CONTAINER}" 2>/dev/null || echo false)" != "true" ]]; then
+    log "web container ${WEB_CONTAINER} not running; skipping"
+    exit 0
+fi
+
+READY=0
+for _ in $(seq 1 90); do
+    if docker exec -u node -w /app "${WEB_CONTAINER}" node -e \
+        "require('http').get('http://127.0.0.1:3100/api/health',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1));" \
+        >/dev/null 2>&1; then
+        READY=1
+        break
+    fi
+    sleep 2
+done
+if [[ "${READY}" -ne 1 ]]; then
+    log "API /api/health never returned HTTP 200 (~3 min); skipping bootstrap-ceo."
+    log "Paperclip is probably not running. Check app logs and embedded Postgres permissions."
+    exit 0
+fi
+
+if docker exec -u node -w /app "${WEB_CONTAINER}" hermes --help >/dev/null 2>&1; then
+    log "Hermes CLI available inside Paperclip Hermes container."
+else
+    log "Hermes CLI not available inside ${WEB_CONTAINER}; inspect image build and PATH."
+fi
+
+health_json="$(docker exec -u node -w /app "${WEB_CONTAINER}" node -e \
+    "require('http').get('http://127.0.0.1:3100/api/health',(r)=>{let b='';r.on('data',d=>b+=d);r.on('end',()=>{if(r.statusCode!==200)process.exit(1);process.stdout.write(b);});}).on('error',()=>process.exit(1));" \
+    2>/dev/null || true)"
+
+if printf '%s' "${health_json}" | grep -Eq '"bootstrapStatus"[[:space:]]*:[[:space:]]*"ready"'; then
+    log "Instance already has an admin user; skipping bootstrap-ceo."
+    exit 0
+fi
+
+if [[ -f "${INVITE_FILE}" ]] \
+    && grep -qE 'https?://[^[:space:]]+/invite/[^[:space:]]+' "${INVITE_FILE}" 2>/dev/null \
+    && printf '%s' "${health_json}" | grep -Eq '"bootstrapInviteActive"[[:space:]]*:[[:space:]]*true'; then
+    log "Active bootstrap invite already exists and is saved on disk; skipping bootstrap-ceo."
+    exit 0
+fi
+
+log "running: pnpm paperclipai auth bootstrap-ceo --base-url ${BASE_URL} (inside ${WEB_CONTAINER})"
+set +e
+out="$(docker exec -u node -w /app -e CI=1 -e HOME=/paperclip "${WEB_CONTAINER}" \
+    pnpm paperclipai auth bootstrap-ceo --base-url "${BASE_URL}" 2>&1)"
+rc=$?
+set -e
+printf '%s\n' "${out}" | tee -a "${LOG_FILE}" >&2
+if [[ "${rc}" -ne 0 ]]; then
+    log "bootstrap-ceo exited ${rc} (may be OK if an instance admin already exists)"
+fi
+
+flat_out="$(printf '%s\n' "${out}" | sed 's/\x1b\[[0-9;]*m//g' || true)"
+[[ -z "${flat_out}" ]] && flat_out="${out}"
+invite_url="$(printf '%s\n' "${flat_out}" | grep -oE 'https?://[^[:space:]]+/invite/[^[:space:]]+' | head -1)"
+if [[ -n "${invite_url}" ]]; then
+    umask 022
+    tmp="${INVITE_FILE}.tmp.$$"
+    {
+        echo "Paperclip Hermes - first instance admin invite"
+        echo ""
+        echo "Open this URL once in your browser to create the first admin account."
+        echo ""
+        echo "${invite_url}"
+        echo ""
+        echo "Saved at: PAPERCLIP_FIRST_ADMIN_INVITE.txt"
+        echo "Updated (UTC): $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    } >"${tmp}"
+    mv "${tmp}" "${INVITE_FILE}"
+    chown 1000:1000 "${INVITE_FILE}" 2>/dev/null || true
+    chmod 644 "${INVITE_FILE}" 2>/dev/null || true
+    log "Wrote invite URL to PAPERCLIP_FIRST_ADMIN_INVITE.txt"
+else
+    log "No invite URL found in CLI output; see ${LOG_FILE} or run bootstrap-ceo manually."
+fi
+exit 0

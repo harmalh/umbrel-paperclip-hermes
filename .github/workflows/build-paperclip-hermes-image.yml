@@ -1,0 +1,136 @@
+name: Build Paperclip Hermes Image (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      paperclip_ref:
+        description: "paperclipai/paperclip git ref (tag/branch/sha)"
+        required: true
+        default: "v2026.325.0"
+      hermes_ref:
+        description: "NousResearch/hermes-agent git ref (tag/branch/sha)"
+        required: true
+        default: "v0.6.0"
+      image_repository:
+        description: "Container repository to publish to"
+        required: true
+        default: "ghcr.io/harmalh/paperclip-hermes-umbrel"
+      image_tag:
+        description: "Registry tag"
+        required: true
+        default: "2026.325.0-hermes.1"
+      push_image:
+        description: "Push built image to registry"
+        type: boolean
+        required: true
+        default: false
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v6
+
+      - name: Checkout upstream Paperclip
+        uses: actions/checkout@v6
+        with:
+          repository: paperclipai/paperclip
+          ref: ${{ inputs.paperclip_ref }}
+          path: upstream-paperclip
+
+      - name: Checkout upstream Hermes Agent
+        uses: actions/checkout@v6
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ inputs.hermes_ref }}
+          path: upstream-hermes
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push_image }}
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build multi-arch image (and optionally push)
+        id: buildx
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/paperclip-hermes.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ inputs.push_image }}
+          tags: |
+            ${{ inputs.image_repository }}:${{ inputs.image_tag }}
+
+      - name: Print digest
+        if: ${{ inputs.push_image }}
+        run: |
+          echo "Digest: ${{ steps.buildx.outputs.digest }}"
+
+      - name: Local smoke test (amd64 only)
+        run: |
+          set -euo pipefail
+
+          docker buildx build \
+            --platform linux/amd64 \
+            --load \
+            -f docker/paperclip-hermes.Dockerfile \
+            -t local/paperclip-hermes-smoke:${{ github.run_id }} \
+            .
+
+          mkdir -p /tmp/paperclip-hermes-data
+          chmod 0777 /tmp/paperclip-hermes-data
+
+          cid="$(docker run -d \
+            -e HOST=0.0.0.0 \
+            -e PORT=3100 \
+            -e SERVE_UI=true \
+            -e PAPERCLIP_HOME=/paperclip \
+            -e HERMES_HOME=/paperclip/hermes-home \
+            -e PAPERCLIP_PUBLIC_URL=http://127.0.0.1:3100 \
+            -e PAPERCLIP_ALLOWED_HOSTNAMES=127.0.0.1,localhost \
+            -e PAPERCLIP_DEPLOYMENT_MODE=authenticated \
+            -e PAPERCLIP_DEPLOYMENT_EXPOSURE=private \
+            -e BETTER_AUTH_SECRET=paperclip-hermes-smoke-secret \
+            -e PAPERCLIP_MIGRATION_AUTO_APPLY=true \
+            -e PAPERCLIP_MIGRATION_PROMPT=never \
+            -v /tmp/paperclip-hermes-data:/paperclip \
+            -p 3100:3100 \
+            local/paperclip-hermes-smoke:${{ github.run_id }})"
+
+          ok="false"
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:3100/api/health >/tmp/paperclip-hermes-health.json; then
+              cat /tmp/paperclip-hermes-health.json
+              ok="true"
+              break
+            fi
+            sleep 2
+          done
+
+          docker exec -u node -w /app "${cid}" hermes --help >/tmp/paperclip-hermes-help.txt
+          cat /tmp/paperclip-hermes-help.txt
+
+          docker exec -u node -w /app "${cid}" \
+            node --input-type=module -e "import { listServerAdapters } from './server/dist/adapters/registry.js'; const ok = listServerAdapters().some((adapter) => adapter.type === 'hermes_local'); if (!ok) process.exit(1); console.log('hermes_local registered');"
+
+          docker logs "${cid}" --tail 250
+          docker rm -f "${cid}" || true
+
+          if [ "${ok}" != "true" ]; then
+            echo "Smoke test failed: /api/health did not become ready" >&2
+            exit 1
+          fi

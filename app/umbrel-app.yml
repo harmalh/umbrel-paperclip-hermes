@@ -1,0 +1,42 @@
+manifestVersion: 1.1
+id: harmalh-paperclip-hermes
+name: Paperclip Hermes
+tagline: Paperclip orchestration with Hermes employees
+icon: https://raw.githubusercontent.com/harmalh/umbrel-paperclip-hermes/main/app/assets/icon.svg
+category: ai
+version: "2026.325.0-hermes.1"
+port: 23140
+description: >-
+  Paperclip Hermes packages Paperclip as an Umbrel app with the Hermes CLI
+  runtime available inside the server image.
+
+
+  It keeps the current Paperclip bootstrap flow and embedded PostgreSQL
+  topology, while enabling Hermes-backed employees through the upstream
+  hermes_local adapter path.
+
+
+  Paperclip and Hermes state stay inside APP_DATA_DIR for this app only.
+
+
+  Build and publish the custom GHCR image before installing from the community
+  store.
+developer: Paperclip AI
+website: https://github.com/paperclipai/paperclip
+submitter: Harm Alhusen
+submission: https://github.com/harmalh/umbrel-paperclip-hermes
+repo: https://github.com/paperclipai/paperclip
+support: https://github.com/paperclipai/paperclip/issues
+gallery:
+  - https://raw.githubusercontent.com/harmalh/umbrel-paperclip-hermes/main/app/assets/gallery/1.svg
+  - https://raw.githubusercontent.com/harmalh/umbrel-paperclip-hermes/main/app/assets/gallery/2.svg
+releaseNotes: >-
+  Initial Hermes-enabled Paperclip packaging for Umbrel.
+
+
+  Uses the existing bootstrap-sidecar pattern and a custom image with Hermes
+  installed alongside Paperclip.
+dependencies: []
+path: "/bootstrap-entry/"
+defaultUsername: ""
+defaultPassword: ""

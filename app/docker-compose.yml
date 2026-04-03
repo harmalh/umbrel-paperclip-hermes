@@ -1,0 +1,40 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      APP_HOST: harmalh-paperclip-hermes_bootstrap_1
+      APP_PORT: 80
+
+  bootstrap:
+    image: ghcr.io/harmalh/paperclip-hermes-umbrel:2026.325.0-hermes.1
+    restart: on-failure
+    init: true
+    depends_on: [web]
+    entrypoint: ["node", "/bootstrap/server.mjs"]
+    volumes:
+      - ${APP_DATA_DIR}/bootstrap:/bootstrap:ro
+      - ${APP_DATA_DIR}:/app-data:ro
+
+  web:
+    image: ghcr.io/harmalh/paperclip-hermes-umbrel:2026.325.0-hermes.1
+    restart: on-failure
+    stop_grace_period: 1m
+    init: true
+    user: "1000:1000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3100"
+      SERVE_UI: "true"
+      HOME: "/paperclip"
+      PAPERCLIP_HOME: "/paperclip"
+      HERMES_HOME: "/paperclip/hermes-home"
+      PAPERCLIP_PUBLIC_URL: "http://${DEVICE_DOMAIN_NAME}:23140"
+      PAPERCLIP_ALLOWED_HOSTNAMES: "${DEVICE_DOMAIN_NAME},${DEVICE_HOSTNAME},localhost,127.0.0.1"
+      PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
+      BETTER_AUTH_SECRET: "$APP_SEED"
+      PAPERCLIP_MIGRATION_AUTO_APPLY: "true"
+      PAPERCLIP_MIGRATION_PROMPT: "never"
+    volumes:
+      - ${APP_DATA_DIR}/data:/paperclip

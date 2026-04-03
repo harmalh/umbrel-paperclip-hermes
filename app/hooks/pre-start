@@ -1,0 +1,121 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/paperclip-umbrel-env.sh"
+_HOST_PORT="$(paperclip_published_host_port)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PKG_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+mkdir -p "${APP_DATA_DIR}/data"
+chown -R 1000:1000 "${APP_DATA_DIR}/data" || true
+chmod u+rwx "${APP_DATA_DIR}/data" || true
+
+find "${APP_DATA_DIR}/data" -type d -path '*/instances/*/db' -exec chmod 700 {} \; \
+    2>/dev/null || true
+
+DB_DIR="${APP_DATA_DIR}/data/instances/default/db"
+if [[ -d "${DB_DIR}" ]]; then
+    chmod 700 "${DB_DIR}" || true
+fi
+
+INST_ROOT="${APP_DATA_DIR}/data/instances"
+if [[ -d "${INST_ROOT}" ]]; then
+    chmod 750 "${INST_ROOT}" || true
+    if [[ -d "${INST_ROOT}/default" ]]; then
+        chmod 750 "${INST_ROOT}/default" || true
+    fi
+fi
+
+CONFIG_DIR="${APP_DATA_DIR}/data/instances/default"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+if [[ ! -f "${CONFIG_FILE}" ]] && command -v jq >/dev/null 2>&1; then
+    mkdir -p "${CONFIG_DIR}"
+    chown -R 1000:1000 "${APP_DATA_DIR}/data/instances" || true
+    UPDATED="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    DD="${DEVICE_DOMAIN_NAME:-umbrel.local}"
+    DH="${DEVICE_HOSTNAME:-umbrel}"
+    PUB="http://${DD}:${_HOST_PORT}"
+    jq -n \
+        --arg updated "$UPDATED" \
+        --arg pub "$PUB" \
+        --arg dh "$DH" \
+        --arg dd "$DD" \
+        '{
+      "$meta": {"version": 1, "updatedAt": $updated, "source": "onboard"},
+      "database": {
+        "mode": "embedded-postgres",
+        "embeddedPostgresDataDir": "/paperclip/instances/default/db",
+        "embeddedPostgresPort": 54329,
+        "backup": {
+          "enabled": true,
+          "intervalMinutes": 60,
+          "retentionDays": 30,
+          "dir": "/paperclip/instances/default/data/backups"
+        }
+      },
+      "logging": {"mode": "file", "logDir": "/paperclip/instances/default/logs"},
+      "server": {
+        "deploymentMode": "authenticated",
+        "exposure": "private",
+        "host": "0.0.0.0",
+        "port": 3100,
+        "allowedHostnames": ([$dd, $dh, "localhost", "127.0.0.1"] | map(ascii_downcase) | unique),
+        "serveUi": true
+      },
+      "auth": {
+        "baseUrlMode": "explicit",
+        "publicBaseUrl": $pub,
+        "disableSignUp": false
+      },
+      "storage": {
+        "provider": "local_disk",
+        "localDisk": {"baseDir": "/paperclip/instances/default/data/storage"},
+        "s3": {
+          "bucket": "paperclip",
+          "region": "us-east-1",
+          "prefix": "",
+          "forcePathStyle": false
+        }
+      },
+      "secrets": {
+        "provider": "local_encrypted",
+        "strictMode": false,
+        "localEncrypted": {
+          "keyFilePath": "/paperclip/instances/default/secrets/master.key"
+        }
+      }
+    }' >"${CONFIG_FILE}.tmp"
+    mv "${CONFIG_FILE}.tmp" "${CONFIG_FILE}"
+    chown 1000:1000 "${CONFIG_FILE}" 2>/dev/null || true
+fi
+
+if [[ -f "${CONFIG_FILE}" ]] && command -v jq >/dev/null 2>&1; then
+    _dd="${DEVICE_DOMAIN_NAME:-umbrel.local}"
+    _want_pub="http://${_dd}:${_HOST_PORT}"
+    jq --arg w "${_want_pub}" '.auth.publicBaseUrl = $w' "${CONFIG_FILE}" >"${CONFIG_FILE}.ptmp" \
+        && mv "${CONFIG_FILE}.ptmp" "${CONFIG_FILE}"
+    chown 1000:1000 "${CONFIG_FILE}" 2>/dev/null || true
+fi
+
+mkdir -p \
+    "${APP_DATA_DIR}/data/instances/default/logs" \
+    "${APP_DATA_DIR}/data/instances/default/data/storage" \
+    "${APP_DATA_DIR}/data/instances/default/data/backups" \
+    "${APP_DATA_DIR}/data/instances/default/secrets" \
+    "${APP_DATA_DIR}/data/hermes-home" \
+    "${APP_DATA_DIR}/data/hermes-home/skills" \
+    "${APP_DATA_DIR}/data/hermes-home/sessions" \
+    "${APP_DATA_DIR}/data/hermes-home/logs" \
+    "${APP_DATA_DIR}/data/.hermes"
+chown -R 1000:1000 "${APP_DATA_DIR}/data/instances/default" || true
+chown -R 1000:1000 "${APP_DATA_DIR}/data/hermes-home" "${APP_DATA_DIR}/data/.hermes" || true
+chmod 750 "${APP_DATA_DIR}/data/instances/default" || true
+chmod 750 "${APP_DATA_DIR}/data/hermes-home" "${APP_DATA_DIR}/data/.hermes" || true
+
+BOOTSTRAP_SRC="${PKG_ROOT}/bootstrap"
+BOOTSTRAP_DST="${APP_DATA_DIR}/bootstrap"
+mkdir -p "${BOOTSTRAP_DST}"
+cp "${BOOTSTRAP_SRC}/index.html" "${BOOTSTRAP_DST}/index.html"
+cp "${BOOTSTRAP_SRC}/server.mjs" "${BOOTSTRAP_DST}/server.mjs"
+chown -R 1000:1000 "${BOOTSTRAP_DST}" || true
