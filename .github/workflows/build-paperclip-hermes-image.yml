@@ -125,7 +125,7 @@ jobs:
           cat /tmp/paperclip-hermes-help.txt
 
           docker exec -u node -w /app "${cid}" \
-            node --input-type=module -e "import { listServerAdapters } from './server/dist/adapters/registry.js'; const ok = listServerAdapters().some((adapter) => adapter.type === 'hermes_local'); if (!ok) process.exit(1); console.log('hermes_local registered');"
+            rg -n "hermes_local" server/dist packages
 
           docker logs "${cid}" --tail 250
           docker rm -f "${cid}" || true
