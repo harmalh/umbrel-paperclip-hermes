@@ -18,7 +18,7 @@ Install **Paperclip Hermes** (`harmalh-paperclip-hermes`).
 - Paperclip upstream:
   `paperclipai/paperclip@v2026.325.0`
 - Hermes Agent upstream:
-  `NousResearch/hermes-agent@v0.6.0`
+  `NousResearch/hermes-agent@v2026.3.30`
 
 Current upstream Paperclip already vendors `hermes-paperclip-adapter` and
 registers `hermes_local` in its server adapter registry, so this package does

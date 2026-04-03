@@ -10,7 +10,7 @@ on:
       hermes_ref:
         description: "NousResearch/hermes-agent git ref (tag/branch/sha)"
         required: true
-        default: "v0.6.0"
+        default: "v2026.3.30"
       image_repository:
         description: "Container repository to publish to"
         required: true
