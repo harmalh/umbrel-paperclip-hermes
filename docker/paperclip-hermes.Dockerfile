@@ -77,10 +77,6 @@ RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/cod
  && mkdir -p /paperclip /paperclip/hermes-home \
  && chown node:node /paperclip /paperclip/hermes-home
 
-COPY upstream-paperclip/scripts/docker-entrypoint.sh /usr/local/bin/
-
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
 ENV NODE_ENV=production \
     HOME=/paperclip \
     HOST=0.0.0.0 \
@@ -100,5 +96,6 @@ VOLUME ["/paperclip"]
 
 EXPOSE 3100
 
-ENTRYPOINT ["docker-entrypoint.sh"]
+USER node
+
 CMD ["node", "--import", "./server/node_modules/tsx/dist/loader.mjs", "server/dist/index.js"]
