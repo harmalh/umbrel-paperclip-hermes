@@ -1,0 +1,156 @@
+name: Release Paperclip Hermes To Umbrel Community Store
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docker/**"
+      - "app/**"
+      - "README.md"
+      - ".github/workflows/release-to-umbrel-community-store.yml"
+  workflow_dispatch:
+    inputs:
+      paperclip_ref:
+        description: "paperclipai/paperclip git ref (tag/branch/sha)"
+        required: false
+        default: "v2026.403.0"
+      hermes_ref:
+        description: "NousResearch/hermes-agent git ref (tag/branch/sha)"
+        required: false
+        default: "v2026.4.13"
+      release_version:
+        description: "Umbrel app version to publish"
+        required: false
+        default: "2026.403.0-hermes.4"
+      image_tag:
+        description: "GHCR image tag to publish"
+        required: false
+        default: "2026.403.0-hermes.4"
+
+concurrency:
+  group: release-paperclip-hermes-store-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      COMMUNITY_STORE_REPO: harmalh/umbrel-community-store
+      COMMUNITY_STORE_APP_DIR: harmalh-paperclip-hermes
+      IMAGE_NAME: ghcr.io/harmalh/paperclip-hermes-umbrel
+      DEFAULT_PAPERCLIP_REF: v2026.403.0
+      DEFAULT_HERMES_REF: v2026.4.13
+      DEFAULT_RELEASE_VERSION: 2026.403.0-hermes.4
+      DEFAULT_IMAGE_TAG: 2026.403.0-hermes.4
+    steps:
+      - name: Verify secret
+        run: test -n "${{ secrets.COMMUNITY_STORE_PAT }}"
+
+      - name: Checkout packaging repo
+        uses: actions/checkout@v6
+
+      - name: Checkout community store repo
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.COMMUNITY_STORE_REPO }}
+          token: ${{ secrets.COMMUNITY_STORE_PAT }}
+          path: community-store
+
+      - name: Resolve release inputs
+        id: release
+        shell: bash
+        env:
+          OVERRIDE_PAPERCLIP_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.paperclip_ref || '' }}
+          OVERRIDE_HERMES_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.hermes_ref || '' }}
+          OVERRIDE_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
+          OVERRIDE_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || '' }}
+        run: |
+          set -euo pipefail
+          paperclip_ref="${OVERRIDE_PAPERCLIP_REF:-${DEFAULT_PAPERCLIP_REF}}"
+          hermes_ref="${OVERRIDE_HERMES_REF:-${DEFAULT_HERMES_REF}}"
+          release_version="${OVERRIDE_RELEASE_VERSION:-${DEFAULT_RELEASE_VERSION}}"
+          image_tag="${OVERRIDE_IMAGE_TAG:-${DEFAULT_IMAGE_TAG}}"
+          echo "paperclip_ref=${paperclip_ref}" >> "$GITHUB_OUTPUT"
+          echo "hermes_ref=${hermes_ref}" >> "$GITHUB_OUTPUT"
+          echo "release_version=${release_version}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout upstream Paperclip
+        uses: actions/checkout@v6
+        with:
+          repository: paperclipai/paperclip
+          ref: ${{ steps.release.outputs.paperclip_ref }}
+          path: upstream-paperclip
+
+      - name: Checkout upstream Hermes Agent
+        uses: actions/checkout@v6
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ steps.release.outputs.hermes_ref }}
+          path: upstream-hermes
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        id: buildx
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/paperclip-hermes.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.release.outputs.image_tag }}
+
+      - name: Sync community store files
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+          IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
+          IMAGE_DIGEST: ${{ steps.buildx.outputs.digest }}
+        run: |
+          set -euo pipefail
+          target="community-store/${COMMUNITY_STORE_APP_DIR}"
+          rm -rf "$target"
+          mkdir -p "$target"
+          cp -R app/. "$target/"
+          python - <<'PY'
+          import os,re
+          from pathlib import Path
+          target=Path('community-store')/os.environ['COMMUNITY_STORE_APP_DIR']
+          compose=(target/'docker-compose.yml').read_text()
+          compose=re.sub(r'(^\s*image:\s*)ghcr\.io/harmalh/paperclip-hermes-umbrel:[^\s@]+(?:@[^\s]+)?$', rf'\1ghcr.io/harmalh/paperclip-hermes-umbrel:{os.environ["IMAGE_TAG"]}@{os.environ["IMAGE_DIGEST"]}', compose, flags=re.M)
+          (target/'docker-compose.yml').write_text(compose)
+          manifest=(target/'umbrel-app.yml').read_text()
+          manifest=re.sub(r'^version:\s*"[^"]+"', f'version: "{os.environ["RELEASE_VERSION"]}"', manifest, flags=re.M)
+          manifest=re.sub(r'^icon:\s*.*$', 'icon: https://raw.githubusercontent.com/harmalh/umbrel-community-store/main/harmalh-paperclip-hermes/assets/icon.svg', manifest, flags=re.M)
+          manifest=re.sub(r'^submission:\s*.*$', 'submission: https://github.com/harmalh/umbrel-community-store', manifest, flags=re.M)
+          (target/'umbrel-app.yml').write_text(manifest+'\n')
+          PY
+
+      - name: Push community store update
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd community-store
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "${COMMUNITY_STORE_APP_DIR}"
+          git diff --cached --quiet && exit 0
+          git commit -m "Release Paperclip Hermes ${{ steps.release.outputs.release_version }}"
+          git push origin HEAD:main
