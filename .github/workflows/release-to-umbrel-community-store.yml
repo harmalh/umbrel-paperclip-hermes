@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: ${{ env.COMMUNITY_STORE_REPO }}
-          token: ${{ secrets.COMMUNITY_STORE_PAT }}
+          ref: main
           path: community-store
 
       - name: Resolve release inputs
@@ -145,12 +145,24 @@ jobs:
 
       - name: Push community store update
         shell: bash
+        env:
+          COMMUNITY_STORE_PAT: ${{ secrets.COMMUNITY_STORE_PAT }}
         run: |
           set -euo pipefail
           cd community-store
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git remote set-url origin "https://x-access-token:${COMMUNITY_STORE_PAT}@github.com/${COMMUNITY_STORE_REPO}.git"
           git add "${COMMUNITY_STORE_APP_DIR}"
           git diff --cached --quiet && exit 0
           git commit -m "Release Paperclip Hermes ${{ steps.release.outputs.release_version }}"
-          git push origin HEAD:main
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git rebase origin/main && git push origin HEAD:main && exit 0
+            if [ "${attempt}" -eq 3 ]; then
+              echo "Failed to push community store update after ${attempt} attempts" >&2
+              exit 1
+            fi
+            git rebase --abort || true
+            sleep $((attempt * 5))
+          done
