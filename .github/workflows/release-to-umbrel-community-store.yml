@@ -59,6 +59,7 @@ jobs:
           repository: ${{ env.COMMUNITY_STORE_REPO }}
           ref: main
           path: community-store
+          persist-credentials: false
 
       - name: Resolve release inputs
         id: release
