@@ -1,0 +1,148 @@
+name: Detect Upstream Updates
+
+on:
+  schedule:
+    - cron: "29 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: detect-paperclip-hermes-upstream-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Read current metadata
+        id: current
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY2'
+          import json
+          import os
+          from pathlib import Path
+
+          config = json.loads(Path('versions.json').read_text())
+          paperclip = config['components']['paperclip']
+          hermes = config['components']['hermes_agent']
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write(f"paperclip_repo={paperclip['repo']}\n")
+              fh.write(f"paperclip_ref={paperclip['ref']}\n")
+              fh.write(f"paperclip_version={paperclip.get('version', '')}\n")
+              fh.write(f"hermes_repo={hermes['repo']}\n")
+              fh.write(f"hermes_ref={hermes['ref']}\n")
+              fh.write(f"hermes_version={hermes.get('version', '')}\n")
+          PY2
+
+      - name: Resolve latest upstream refs
+        id: latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAPERCLIP_REPO: ${{ steps.current.outputs.paperclip_repo }}
+          HERMES_REPO: ${{ steps.current.outputs.hermes_repo }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY2'
+          import json
+          import os
+          import subprocess
+
+          def gh_json(*args):
+              return json.loads(subprocess.check_output(['gh', 'api', *args], text=True))
+
+          paperclip_release = gh_json(f'repos/{os.environ["PAPERCLIP_REPO"]}/releases/latest')
+          hermes_release = gh_json(f'repos/{os.environ["HERMES_REPO"]}/releases/latest')
+          paperclip_tag = paperclip_release['tag_name']
+          hermes_tag = hermes_release['tag_name']
+          paperclip_ref = gh_json(f'repos/{os.environ["PAPERCLIP_REPO"]}/commits/{paperclip_tag}')['sha']
+          hermes_ref = gh_json(f'repos/{os.environ["HERMES_REPO"]}/commits/{hermes_tag}')['sha']
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write(f'paperclip_version={paperclip_tag}\n')
+              fh.write(f'paperclip_ref={paperclip_ref}\n')
+              fh.write(f'hermes_version={hermes_tag}\n')
+              fh.write(f'hermes_ref={hermes_ref}\n')
+          PY2
+
+      - name: Update metadata if upstream changed
+        id: update
+        shell: bash
+        env:
+          CURRENT_PAPERCLIP_REF: ${{ steps.current.outputs.paperclip_ref }}
+          CURRENT_HERMES_REF: ${{ steps.current.outputs.hermes_ref }}
+          LATEST_PAPERCLIP_VERSION: ${{ steps.latest.outputs.paperclip_version }}
+          LATEST_PAPERCLIP_REF: ${{ steps.latest.outputs.paperclip_ref }}
+          LATEST_HERMES_VERSION: ${{ steps.latest.outputs.hermes_version }}
+          LATEST_HERMES_REF: ${{ steps.latest.outputs.hermes_ref }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY2'
+          import json
+          import os
+          from pathlib import Path
+
+          changed = []
+          path = Path('versions.json')
+          data = json.loads(path.read_text())
+
+          if os.environ['CURRENT_PAPERCLIP_REF'] != os.environ['LATEST_PAPERCLIP_REF']:
+              data['components']['paperclip']['version'] = os.environ['LATEST_PAPERCLIP_VERSION']
+              data['components']['paperclip']['ref'] = os.environ['LATEST_PAPERCLIP_REF']
+              changed.append('paperclip')
+
+          if os.environ['CURRENT_HERMES_REF'] != os.environ['LATEST_HERMES_REF']:
+              data['components']['hermes_agent']['version'] = os.environ['LATEST_HERMES_VERSION']
+              data['components']['hermes_agent']['ref'] = os.environ['LATEST_HERMES_REF']
+              changed.append('hermes-agent')
+
+          if not changed:
+              with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+                  fh.write('changed=false\n')
+              raise SystemExit(0)
+
+          # Derive combined mixed-app tag from component versions.
+          paperclip_version = data['components']['paperclip']['version'].lstrip('v')
+          hermes_version = data['components']['hermes_agent']['version'].lstrip('v')
+          data['image_tag'] = f'{paperclip_version}-hermes.{hermes_version.split(".")[-1]}'
+
+          path.write_text(json.dumps(data, indent=2) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write('changed=true\n')
+              fh.write(f'components={",".join(changed)}\n')
+          PY2
+
+      - name: Commit and push detector update
+        if: steps.update.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git add versions.json
+          git commit -m "chore: refresh upstream pins for ${{ steps.update.outputs.components }}"
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git rebase origin/main && git push origin HEAD:main && exit 0
+            if [ "${attempt}" -eq 3 ]; then
+              echo "Failed to push detector update after ${attempt} attempts" >&2
+              exit 1
+            fi
+            git rebase --abort || true
+            sleep $((attempt * 5))
+          done
+
+      - name: Summarize no-op result
+        if: steps.update.outputs.changed != 'true'
+        run: echo "No upstream Paperclip or Hermes Agent updates detected." >> "$GITHUB_STEP_SUMMARY"
