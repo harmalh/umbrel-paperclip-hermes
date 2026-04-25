@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - "versions.json"
       - "docker/**"
       - "app/**"
       - "README.md"
@@ -14,19 +15,19 @@ on:
       paperclip_ref:
         description: "paperclipai/paperclip git ref (tag/branch/sha)"
         required: false
-        default: "v2026.403.0"
+        default: ""
       hermes_ref:
         description: "NousResearch/hermes-agent git ref (tag/branch/sha)"
         required: false
-        default: "v2026.4.13"
+        default: ""
       release_version:
         description: "Umbrel app version to publish"
         required: false
-        default: "2026.403.0-hermes.4"
+        default: ""
       image_tag:
         description: "GHCR image tag to publish"
         required: false
-        default: "2026.403.0-hermes.4"
+        default: ""
 
 concurrency:
   group: release-paperclip-hermes-store-${{ github.ref }}
@@ -42,10 +43,6 @@ jobs:
       COMMUNITY_STORE_REPO: harmalh/umbrel-community-store
       COMMUNITY_STORE_APP_DIR: harmalh-paperclip-hermes
       IMAGE_NAME: ghcr.io/harmalh/paperclip-hermes-umbrel
-      DEFAULT_PAPERCLIP_REF: v2026.403.0
-      DEFAULT_HERMES_REF: v2026.4.13
-      DEFAULT_RELEASE_VERSION: 2026.403.0-hermes.4
-      DEFAULT_IMAGE_TAG: 2026.403.0-hermes.4
     steps:
       - name: Verify secret
         run: test -n "${{ secrets.COMMUNITY_STORE_PAT }}"
@@ -61,8 +58,8 @@ jobs:
           path: community-store
           persist-credentials: false
 
-      - name: Resolve release inputs
-        id: release
+      - name: Read packaging build config
+        id: config
         shell: bash
         env:
           OVERRIDE_PAPERCLIP_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.paperclip_ref || '' }}
@@ -71,27 +68,43 @@ jobs:
           OVERRIDE_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || '' }}
         run: |
           set -euo pipefail
-          paperclip_ref="${OVERRIDE_PAPERCLIP_REF:-${DEFAULT_PAPERCLIP_REF}}"
-          hermes_ref="${OVERRIDE_HERMES_REF:-${DEFAULT_HERMES_REF}}"
-          release_version="${OVERRIDE_RELEASE_VERSION:-${DEFAULT_RELEASE_VERSION}}"
-          image_tag="${OVERRIDE_IMAGE_TAG:-${DEFAULT_IMAGE_TAG}}"
-          echo "paperclip_ref=${paperclip_ref}" >> "$GITHUB_OUTPUT"
-          echo "hermes_ref=${hermes_ref}" >> "$GITHUB_OUTPUT"
-          echo "release_version=${release_version}" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY2'
+          import json
+          import os
+          from pathlib import Path
+
+          config = json.loads(Path('versions.json').read_text())
+          paperclip = config['components']['paperclip']
+          hermes = config['components']['hermes_agent']
+          paperclip_ref = os.environ.get('OVERRIDE_PAPERCLIP_REF', '').strip() or paperclip['ref']
+          hermes_ref = os.environ.get('OVERRIDE_HERMES_REF', '').strip() or hermes['ref']
+          image_tag = os.environ.get('OVERRIDE_IMAGE_TAG', '').strip() or config['image_tag']
+          release_version = os.environ.get('OVERRIDE_RELEASE_VERSION', '').strip() or image_tag
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write(f"paperclip_repo={paperclip['repo']}\n")
+              fh.write(f"paperclip_track={paperclip['track']}\n")
+              fh.write(f"paperclip_version={paperclip.get('version', '')}\n")
+              fh.write(f"paperclip_ref={paperclip_ref}\n")
+              fh.write(f"hermes_repo={hermes['repo']}\n")
+              fh.write(f"hermes_track={hermes['track']}\n")
+              fh.write(f"hermes_version={hermes.get('version', '')}\n")
+              fh.write(f"hermes_ref={hermes_ref}\n")
+              fh.write(f"release_version={release_version}\n")
+              fh.write(f"image_tag={image_tag}\n")
+          PY2
 
       - name: Checkout upstream Paperclip
         uses: actions/checkout@v6
         with:
-          repository: paperclipai/paperclip
-          ref: ${{ steps.release.outputs.paperclip_ref }}
+          repository: ${{ steps.config.outputs.paperclip_repo }}
+          ref: ${{ steps.config.outputs.paperclip_ref }}
           path: upstream-paperclip
 
       - name: Checkout upstream Hermes Agent
         uses: actions/checkout@v6
         with:
-          repository: NousResearch/hermes-agent
-          ref: ${{ steps.release.outputs.hermes_ref }}
+          repository: ${{ steps.config.outputs.hermes_repo }}
+          ref: ${{ steps.config.outputs.hermes_ref }}
           path: upstream-hermes
 
       - name: Set up QEMU
@@ -116,14 +129,18 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.release.outputs.image_tag }}
+            ${{ env.IMAGE_NAME }}:${{ steps.config.outputs.image_tag }}
 
       - name: Sync community store files
         shell: bash
         env:
-          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
-          IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
+          RELEASE_VERSION: ${{ steps.config.outputs.release_version }}
+          IMAGE_TAG: ${{ steps.config.outputs.image_tag }}
           IMAGE_DIGEST: ${{ steps.buildx.outputs.digest }}
+          PAPERCLIP_VERSION: ${{ steps.config.outputs.paperclip_version }}
+          PAPERCLIP_REF: ${{ steps.config.outputs.paperclip_ref }}
+          HERMES_VERSION: ${{ steps.config.outputs.hermes_version }}
+          HERMES_REF: ${{ steps.config.outputs.hermes_ref }}
         run: |
           set -euo pipefail
           target="community-store/${COMMUNITY_STORE_APP_DIR}"
@@ -133,14 +150,46 @@ jobs:
           python - <<'PY'
           import os,re
           from pathlib import Path
+
+          def format_component(name, version, ref):
+              version = version.strip()
+              ref = ref.strip()
+              if version:
+                  return f'{name} {version}'
+              if ref:
+                  return f'{name} commit {ref[:7]}'
+              return name
+
           target=Path('community-store')/os.environ['COMMUNITY_STORE_APP_DIR']
           compose=(target/'docker-compose.yml').read_text()
           compose=re.sub(r'(^\s*image:\s*)ghcr\.io/harmalh/paperclip-hermes-umbrel:[^\s@]+(?:@[^\s]+)?$', rf'\1ghcr.io/harmalh/paperclip-hermes-umbrel:{os.environ["IMAGE_TAG"]}@{os.environ["IMAGE_DIGEST"]}', compose, flags=re.M)
           (target/'docker-compose.yml').write_text(compose)
+          paperclip_label = format_component('Paperclip', os.environ.get('PAPERCLIP_VERSION', ''), os.environ.get('PAPERCLIP_REF', ''))
+          hermes_label = format_component('Hermes Agent', os.environ.get('HERMES_VERSION', ''), os.environ.get('HERMES_REF', ''))
           manifest=(target/'umbrel-app.yml').read_text()
           manifest=re.sub(r'^version:\s*"[^"]+"', f'version: "{os.environ["RELEASE_VERSION"]}"', manifest, flags=re.M)
           manifest=re.sub(r'^icon:\s*.*$', 'icon: https://raw.githubusercontent.com/harmalh/umbrel-community-store/main/harmalh-paperclip-hermes/assets/icon.svg', manifest, flags=re.M)
           manifest=re.sub(r'^submission:\s*.*$', 'submission: https://github.com/harmalh/umbrel-community-store', manifest, flags=re.M)
+          description = (
+              'description: >-\n'
+              '  Paperclip Hermes packages Paperclip as an Umbrel app with the Hermes CLI\n'
+              '  runtime available inside the server image.\n\n'
+              '  It keeps the current Paperclip bootstrap flow and embedded PostgreSQL\n'
+              '  topology, while enabling Hermes-backed employees through the upstream\n'
+              '  hermes_local adapter path.\n\n'
+              f'  Bundled upstreams: {paperclip_label} and {hermes_label}.\n\n'
+              '  Paperclip and Hermes state stay inside APP_DATA_DIR for this app only.\n\n'
+              '  Build and publish the custom GHCR image before installing from the community\n'
+              '  store.\n'
+          )
+          manifest=re.sub(r'(?ms)^description:\s*>-\n.*?^developer:\s*.*$', description + 'developer: Paperclip AI', manifest)
+          release_notes = (
+              'releaseNotes: >-\n'
+              f'  Rebuild Paperclip Hermes with {hermes_label} while packaging {paperclip_label}.\n\n'
+              '  This refreshes the digest-pinned image used by Umbrel so Hermes-backed\n'
+              '  employees pick up the newer tagged runtime fixes.\n'
+          )
+          manifest=re.sub(r'(?ms)^releaseNotes:\s*>-\n.*?^dependencies:\s*\[\]\s*$', release_notes + 'dependencies: []', manifest)
           (target/'umbrel-app.yml').write_text(manifest+'\n')
           PY
 
@@ -156,7 +205,7 @@ jobs:
           git remote set-url origin "https://x-access-token:${COMMUNITY_STORE_PAT}@github.com/${COMMUNITY_STORE_REPO}.git"
           git add "${COMMUNITY_STORE_APP_DIR}"
           git diff --cached --quiet && exit 0
-          git commit -m "Release Paperclip Hermes ${{ steps.release.outputs.release_version }}"
+          git commit -m "Release Paperclip Hermes ${{ steps.config.outputs.release_version }}"
           for attempt in 1 2 3; do
             git fetch origin main
             git rebase origin/main && git push origin HEAD:main && exit 0

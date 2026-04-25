@@ -15,10 +15,15 @@ Install **Paperclip Hermes** (`harmalh-paperclip-hermes`).
 
 ## Source Pins
 
-- Paperclip upstream:
-  `paperclipai/paperclip@v2026.325.0`
-- Hermes Agent upstream:
-  `NousResearch/hermes-agent@v2026.4.8`
+The editable mixed-app source configuration lives in `versions.json`.
+
+- `components.paperclip` tracks the bundled Paperclip upstream.
+- `components.hermes_agent` tracks the bundled Hermes Agent upstream from `NousResearch/hermes-agent`.
+- Detector workflows should report Paperclip and Hermes Agent changes separately before packaging them together.
+
+Current tested release pins:
+- `paperclipai/paperclip@a07237779bd5391a4683a754ed95249d57a49b2c` (`v2026.403.0`)
+- `NousResearch/hermes-agent@1af2e18d408a9dcc2c61d6fc1eef5c6667f8e254` (`v2026.4.13`)
 
 Current upstream Paperclip already vendors `hermes-paperclip-adapter` and
 registers `hermes_local` in its server adapter registry, so this package does

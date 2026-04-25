@@ -1,0 +1,17 @@
+{
+  "components": {
+    "paperclip": {
+      "repo": "paperclipai/paperclip",
+      "track": "latest-release",
+      "version": "v2026.403.0",
+      "ref": "a07237779bd5391a4683a754ed95249d57a49b2c"
+    },
+    "hermes_agent": {
+      "repo": "NousResearch/hermes-agent",
+      "track": "latest-release",
+      "version": "v2026.4.13",
+      "ref": "1af2e18d408a9dcc2c61d6fc1eef5c6667f8e254"
+    }
+  },
+  "image_tag": "2026.403.0-hermes.4"
+}

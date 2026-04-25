@@ -4,7 +4,7 @@ name: Paperclip Hermes
 tagline: Paperclip orchestration with Hermes employees
 icon: https://raw.githubusercontent.com/harmalh/umbrel-paperclip-hermes/main/app/assets/icon.svg
 category: ai
-version: "2026.325.0-hermes.3"
+version: "2026.403.0-hermes.4"
 port: 23140
 description: >-
   Paperclip Hermes packages Paperclip as an Umbrel app with the Hermes CLI
@@ -14,6 +14,9 @@ description: >-
   It keeps the current Paperclip bootstrap flow and embedded PostgreSQL
   topology, while enabling Hermes-backed employees through the upstream
   hermes_local adapter path.
+
+
+  Bundled upstreams: Paperclip v2026.403.0 and Hermes Agent v2026.4.13.
 
 
   Paperclip and Hermes state stay inside APP_DATA_DIR for this app only.
@@ -32,7 +35,7 @@ gallery:
   - https://raw.githubusercontent.com/harmalh/umbrel-paperclip-hermes/main/app/assets/gallery/2.svg
 releaseNotes: >-
   Rebuild Paperclip Hermes with the newer stable Hermes Agent release
-  `v2026.4.8` while keeping the Paperclip upstream pin at `v2026.325.0`.
+  `v2026.4.13` while updating the Paperclip upstream pin to `v2026.403.0`.
 
   This refreshes the digest-pinned image used by Umbrel so Hermes-backed
   employees pick up the newer tagged runtime fixes.
