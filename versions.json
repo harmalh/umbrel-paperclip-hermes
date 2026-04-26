@@ -3,15 +3,15 @@
     "paperclip": {
       "repo": "paperclipai/paperclip",
       "track": "latest-release",
-      "version": "v2026.403.0",
-      "ref": "a07237779bd5391a4683a754ed95249d57a49b2c"
+      "version": "v2026.416.0",
+      "ref": "b8725c52eff66cdea8cb223f1ca885475a254468"
     },
     "hermes_agent": {
       "repo": "NousResearch/hermes-agent",
       "track": "latest-release",
-      "version": "v2026.4.13",
-      "ref": "1af2e18d408a9dcc2c61d6fc1eef5c6667f8e254"
+      "version": "v2026.4.23",
+      "ref": "bf196a3fc0fd1f79353369e8732051db275c6276"
     }
   },
-  "image_tag": "2026.403.0-hermes.4"
+  "image_tag": "2026.416.0-hermes.23"
 }
