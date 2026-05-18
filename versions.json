@@ -3,8 +3,8 @@
     "paperclip": {
       "repo": "paperclipai/paperclip",
       "track": "latest-release",
-      "version": "v2026.513.0",
-      "ref": "f4bed4a70f34551ffd4c7c76cf8d8be2ae761d74"
+      "version": "v2026.517.0",
+      "ref": "3e6610fb938d04638fa578a1fc0d119b434fa2e4"
     },
     "hermes_agent": {
       "repo": "NousResearch/hermes-agent",
@@ -13,5 +13,5 @@
       "ref": "a91a57fa5a13d516c38b07a141a9ce8a3daabeb0"
     }
   },
-  "image_tag": "2026.513.0-hermes.16"
+  "image_tag": "2026.517.0-hermes.16"
 }
